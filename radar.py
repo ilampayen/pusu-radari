@@ -7,11 +7,10 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="S&P 500 Pusu Radarı", layout="wide")
+st.set_page_config(page_title="S&P 500 Pusu Radarı V8.0", layout="wide")
 st.title("🏛️ AKADEMİK FİNANS KONSEYİ")
-st.subheader("S&P 500 Kuantitatif Pusu Radarı (V6.1)")
+st.subheader("S&P 500 Kuantitatif Radar ve Backtest Motoru (V8.0)")
 
-# BELLEK YÖNETİMİ: Verileri hafızada tutmak için
 if 'firsatlar_df' not in st.session_state:
     st.session_state.firsatlar_df = None
 
@@ -23,6 +22,27 @@ def sp500_listesini_getir():
     tablo = pd.read_html(html_verisi)[0]
     return [t.replace('.', '-') for t in tablo['Symbol'].tolist()]
 
+def backtest_hesapla(data, limit=35, bekleme_suresi=10):
+    try:
+        sinyaller = data[data['RSI'] < limit]
+        if len(sinyaller) == 0: return 0.0, 0.0
+        kazanc_sayisi, toplam_getiri, gecerli_islem = 0, 0.0, 0
+        
+        for idx, row in sinyaller.iterrows():
+            sinyal_index = data.index.get_loc(idx)
+            if sinyal_index + bekleme_suresi < len(data):
+                alis = row['Close']
+                satis = data.iloc[sinyal_index + bekleme_suresi]['Close']
+                getiri = (satis - alis) / alis
+                toplam_getiri += getiri
+                if getiri > 0: kazanc_sayisi += 1
+                gecerli_islem += 1
+                
+        if gecerli_islem == 0: return 0.0, 0.0
+        return round((kazanc_sayisi / gecerli_islem) * 100, 1), round((toplam_getiri / gecerli_islem) * 100, 2)
+    except:
+        return 0.0, 0.0
+
 def radar_taramasi():
     tickers = sp500_listesini_getir()
     macro_limit, micro_limit = 35, 30
@@ -32,15 +52,18 @@ def radar_taramasi():
 
     for i, ticker in enumerate(tickers):
         ilerleme_cubugu.progress((i + 1) / len(tickers))
-        durum_metni.text(f"🔍 Denetleniyor: {ticker} ({i+1}/{len(tickers)})")
+        durum_metni.text(f"🔍 Taranıyor ve Test Ediliyor: {ticker} ({i+1}/{len(tickers)})")
+        
         try:
             hisse = yf.Ticker(ticker)
-            d_gunluk = hisse.history(period="60d")
-            if d_gunluk.empty: continue
+            d_gunluk = hisse.history(period="1y") # Backtest için 1 yıllık veri çekilir
+            if len(d_gunluk) < 50: continue
             d_gunluk['RSI'] = ta.momentum.RSIIndicator(d_gunluk['Close']).rsi()
             rsi_g = d_gunluk['RSI'].iloc[-1]
             
             if rsi_g < macro_limit:
+                kazanma_orani, ortalama_getiri = backtest_hesapla(d_gunluk, macro_limit, 10)
+                
                 d_15m = hisse.history(period="5d", interval="15m")
                 if d_15m.empty: continue
                 d_15m['RSI'] = ta.momentum.RSIIndicator(d_15m['Close']).rsi()
@@ -52,6 +75,8 @@ def radar_taramasi():
                     "Hisse": ticker,
                     "Makro RSI": round(rsi_g, 1),
                     "Mikro RSI": round(rsi_m, 1),
+                    "Tarihsel Kazanma (%)": kazanma_orani,
+                    "Ortalama Getiri (%)": ortalama_getiri,
                     "Fiyat ($)": round(fiyat, 2),
                     "Pusu Limiti ($)": round(fiyat * 0.995, 2),
                     "Kâr Al ($)": round(fiyat * 1.07, 2)
@@ -62,20 +87,15 @@ def radar_taramasi():
     ilerleme_cubugu.empty()
     return pd.DataFrame(liste)
 
-# BUTON VE GÖSTERİM
-if st.button("🚀 RADARI ATEŞLE"):
-    with st.spinner("Piyasa taranıyor..."):
-        res = radar_taramasi()
-        st.session_state.firsatlar_df = res
+if st.button("🚀 S&P 500 RADARINI VE BACKTESTİ ATEŞLE"):
+    with st.spinner("Amerikan Borsası taranıyor ve stratejiler test ediliyor... (2-4 dk)"):
+        st.session_state.firsatlar_df = radar_taramasi()
 
-# EĞER VERİ VARSA GÖSTER
 if st.session_state.firsatlar_df is not None:
     df = st.session_state.firsatlar_df
-    st.success(f"Analiz Tamamlandı: {len(df)} aday listede.")
-    
-    # Tabloyu Göster
-    st.dataframe(df, use_container_width=True)
-    
-    # CSV İndirme Butonu
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Sonuçları CSV Olarak İndir", csv, "pusu_adaylari.csv", "text/csv")
+    if len(df) > 0:
+        st.success(f"Analiz Tamamlandı: {len(df)} aday listede.")
+        st.dataframe(df, use_container_width=True)
+        st.download_button("📥 CSV İndir", df.to_csv(index=False).encode('utf-8'), "sp500_backtest.csv", "text/csv")
+    else:
+        st.warning("Kriterlere uyan hisse bulunamadı.")
