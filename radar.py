@@ -2,20 +2,22 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import ta
-import requests
 import warnings
 
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="Huzur ve Pusu Radarı V8.3", layout="wide")
+# 1. SAYFA YAPISI
+st.set_page_config(page_title="Çift Motorlu Pusu Radarı V8.5", layout="wide")
 st.title("🏛️ AKADEMİK FİNANS KONSEYİ")
-st.subheader("VIP ETF Denetimi & S&P 500 Kuantitatif Radar (V8.3)")
+st.subheader("Huzur Portföyü & S&P 500 Bağımsız Denetim Sistemi (V8.5)")
 
+# BELLEK YÖNETİMİ
 if 'etf_df' not in st.session_state: st.session_state.etf_df = None
 if 'market_df' not in st.session_state: st.session_state.market_df = None
 
 huzur_listesi = ["VEA", "SPYM", "SCHD"]
 
+# 2. YARDIMCI FONKSİYONLAR
 @st.cache_data(ttl=3600)
 def sp500_listesini_getir():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
@@ -38,7 +40,7 @@ def backtest_hesapla(data, limit=35):
                 if ret > 0: kazanc += 1
                 adet += 1
         return (round((kazanc/adet)*100, 1), round((toplam/adet)*100, 2)) if adet > 0 else (0.0, 0.0)
-    except: return 0.0, 0.0
+    except: return (0.0, 0.0)
 
 def analiz_et(ticker, is_etf=False):
     try:
@@ -50,7 +52,6 @@ def analiz_et(ticker, is_etf=False):
         rsi_g = d_gunluk['RSI'].iloc[-1]
         fiyat = d_gunluk['Close'].iloc[-1]
         
-        # S&P 500 hisseleri için filtre, ETF'ler için serbest geçiş
         if is_etf or rsi_g < 35:
             res = {"Enstrüman": ticker, "Makro RSI": round(rsi_g, 1), "Fiyat ($)": round(fiyat, 2)}
             
@@ -66,45 +67,50 @@ def analiz_et(ticker, is_etf=False):
             res["Tarihsel Başarı (%)"] = k
             res["Ort. 10G Getiri (%)"] = o
             
-            # --- VIP ETF ÖZELLİKLERİ ---
             if is_etf:
-                # 1. Zirveden Düşüş (Drawdown)
-                zirve = d_gunluk['High'].max()
-                res["Zirveden Düşüş (%)"] = round(((fiyat - zirve) / zirve) * 100, 2)
-                
-                # 2. 200 Günlük Ortalama Mesafesi
+                res["Zirveden Düşüş (%)"] = round(((fiyat - d_gunluk['High'].max()) / d_gunluk['High'].max()) * 100, 2)
                 sma200 = d_gunluk['Close'].rolling(window=200).mean().iloc[-1] if len(d_gunluk) >= 200 else d_gunluk['Close'].mean()
                 res["200G Ort. Mesafe (%)"] = round(((fiyat - sma200) / sma200) * 100, 2)
                 
-                # 3. Temettü Verimi (Trailing Yield)
-                info = hisse.info
-                yield_val = info.get('trailingAnnualDividendYield', 0)
-                res["Temettü Verimi (%)"] = round(yield_val * 100, 2) if yield_val else 0.0
+                # Gerçek Temettü Hesabı (V8.4 Fix)
+                son_yil = hisse.dividends[hisse.dividends.index > (pd.Timestamp.now(tz='UTC') - pd.DateOffset(years=1))]
+                res["Temettü Verimi (%)"] = round((son_yil.sum() / fiyat) * 100, 2)
             
             return res
     except: return None
 
-if st.button("🚀 VIP SİSTEMİ ATEŞLE"):
-    with st.spinner("Huzur Portföyü ve S&P 500 denetleniyor..."):
-        # ETF Bölümü
-        etf_res = [analiz_et(t, is_etf=True) for t in huzur_listesi]
-        st.session_state.etf_df = pd.DataFrame([x for x in etf_res if x])
-        
-        # Piyasa Bölümü
-        market_res = []
-        tickers = sp500_listesini_getir()
-        prog = st.progress(0)
-        for i, t in enumerate(tickers):
-            prog.progress((i+1)/len(tickers))
-            r = analiz_et(t)
-            if r: market_res.append(r)
-        st.session_state.market_df = pd.DataFrame(market_res)
+# 3. KONTROL PANELİ (AYRIK BUTONLAR)
+col1, col2 = st.columns(2)
 
-# GÖSTERİM
+with col1:
+    if st.button("🛡️ HUZUR PORTFÖYÜNÜ DENETLE (Hızlı)"):
+        with st.spinner("VIP Listesi denetleniyor..."):
+            etf_res = [analiz_et(t, is_etf=True) for t in huzur_listesi]
+            st.session_state.etf_df = pd.DataFrame([x for x in etf_res if x])
+        st.success("Huzur Portföyü Güncellendi.")
+
+with col2:
+    if st.button("🚀 S&P 500 RADARINI ATEŞLE (Derin)"):
+        with st.spinner("Tüm S&P 500 taranıyor..."):
+            market_res = []
+            tickers = sp500_listesini_getir()
+            prog = st.progress(0)
+            for i, t in enumerate(tickers):
+                prog.progress((i+1)/len(tickers))
+                r = analiz_et(t)
+                if r: market_res.append(r)
+            st.session_state.market_df = pd.DataFrame(market_res)
+        st.success("Piyasa Taraması Tamamlandı.")
+
+# 4. GÖRSELLEŞTİRME
+st.markdown("---")
 if st.session_state.etf_df is not None:
-    st.markdown("### 🛡️ HUZUR PORTFÖYÜ (KURUMSAL DENETİM)")
-    st.table(st.session_state.etf_df) # Tabloyu daha okunaklı kılar
+    st.markdown("### 🏛️ HUZUR PORTFÖYÜ DURUM RAPORU")
+    st.table(st.session_state.etf_df)
 
 if st.session_state.market_df is not None:
-    st.markdown("### 🔍 S&P 500 PUSU ADAYLARI")
-    st.dataframe(st.session_state.market_df, use_container_width=True)
+    st.markdown("### 🔍 S&P 500 GÜNCEL PUSU ADAYLARI")
+    if not st.session_state.market_df.empty:
+        st.dataframe(st.session_state.market_df.sort_values(by="Tarihsel Başarı (%)", ascending=False), use_container_width=True)
+    else:
+        st.info("Kriterlere uyan agresif bir fırsat bulunamadı.")
